@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Keyword Search and Export</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.3/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <style>
+      #exportButton {
+        margin-top: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Keyword Search and Export</h1>
+
+    <input type="file" id="excelFile" accept=".xlsx, .xls" />
+    <button id="searchButton" disabled>Search Keywords</button>
+    <button id="exportButton" disabled>Export to Excel</button>
+
+    <h2>Results</h2>
+    <div id="results"></div>
+
+    <script>
+      let keywords = [];
+      let resultData = [];
+
+      // Handle Excel file import
+      document
+        .getElementById("excelFile")
+        .addEventListener("change", (event) => {
+          const file = event.target.files[0];
+          if (file) {
+            const reader = new FileReader();
+            reader.onload = function (e) {
+              const data = e.target.result;
+              const workbook = XLSX.read(data, { type: "binary" });
+
+              // Assuming the Excel file has one sheet, reading the first sheet
+              const sheetName = workbook.SheetNames[0];
+              const sheet = workbook.Sheets[sheetName];
+              const json = XLSX.utils.sheet_to_json(sheet);
+
+              // Extract keywords from the first column (assuming keywords are in the first column)
+              keywords = json
+                .map((row) => row[Object.keys(row)[0]])
+                .filter((keyword) => keyword);
+
+              document.getElementById("searchButton").disabled = false;
+              alert("Excel file loaded successfully!");
+            };
+            reader.readAsBinaryString(file);
+          }
+        });
+
+      // Handle search action (making GET requests with keywords)
+      document.getElementById("searchButton").addEventListener("click", () => {
+        if (keywords.length > 0) {
+          resultData = [];
+          let completedRequests = 0;
+          keywords.forEach((keyword) => {
+            axios
+              .get(
+                `https://cve.mitre.org/cgi-bin/cvekey.cgi?keyword=${encodeURIComponent(
+                  keyword
+                )}`
+              )
+              .then((response) => {
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(response.data, "text/html");
+
+                // Extract the number of CVE records that match the search using a regex
+                const matchesText = doc.body.innerText; // Get all text content
+                const match = matchesText.match(
+                  /There are (\d+) CVE Records that match your search/
+                );
+                console.log(match);
+                if (match && match[1]) {
+                  const numberOfRecords = match[1]; // The number is captured in the first capture group
+                  resultData.push({ keyword, numberOfRecords });
+                }
+              })
+              .catch((error) => {
+                console.error(`Error searching for keyword: ${keyword}`, error);
+              })
+              .finally(() => {
+                completedRequests++;
+                if (completedRequests === keywords.length) {
+                  displayResults();
+                  document.getElementById("exportButton").disabled = false;
+                }
+              });
+          });
+        }
+      });
+
+      // Display the search results
+      function displayResults() {
+        const resultsDiv = document.getElementById("results");
+        resultsDiv.innerHTML = ""; // Clear previous results
+        resultData.forEach((result) => {
+          const resultElement = document.createElement("div");
+          resultElement.innerHTML = `<strong>Keyword:</strong> ${result.keyword} <br><strong>Number of CVE Records:</strong> ${result.numberOfRecords}`;
+          resultsDiv.appendChild(resultElement);
+        });
+      }
+
+      // Handle export to Excel
+      document.getElementById("exportButton").addEventListener("click", () => {
+        const wb = XLSX.utils.book_new();
+        const wsData = [];
+        resultData.forEach((result) => {
+          wsData.push([result.keyword, result.numberOfRecords]);
+        });
+        const ws = XLSX.utils.aoa_to_sheet([
+          ["Keyword", "Number of CVE Records"],
+          ...wsData,
+        ]);
+
+        XLSX.utils.book_append_sheet(wb, ws, "Search Results");
+        XLSX.writeFile(wb, "search_results.xlsx");
+      });
+    </script>
+  </body>
+</html>
